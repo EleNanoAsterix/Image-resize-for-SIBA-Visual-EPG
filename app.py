@@ -1,112 +1,96 @@
 import streamlit as st
+from PIL import Image
 import os
 import zipfile
-from PIL import Image
 import shutil
+from io import BytesIO
 
-def recortar_a_proporcion(img, proporcion_objetivo):
-    """Recorta la imagen centrada a la proporción deseada."""
-    ancho_original, alto_original = img.size
-    ratio_objetivo = proporcion_objetivo[0] / proporcion_objetivo[1]
-    ratio_actual = ancho_original / alto_original
+# 📂 Carpeta temporal para imágenes
+OUTPUT_FOLDER = "imagenes_redimensionadas"
 
-    if ratio_actual > ratio_objetivo:
-        nuevo_ancho = int(alto_original * ratio_objetivo)
-        izquierda = (ancho_original - nuevo_ancho) // 2
-        derecha = izquierda + nuevo_ancho
-        caja = (izquierda, 0, derecha, alto_original)
-    else:
-        nuevo_alto = int(ancho_original / ratio_objetivo)
-        arriba = (alto_original - nuevo_alto) // 2
-        abajo = arriba + nuevo_alto
-        caja = (0, arriba, ancho_original, abajo)
+# Crear carpeta si no existe
+if not os.path.exists(OUTPUT_FOLDER):
+    os.makedirs(OUTPUT_FOLDER)
 
-    return img.crop(caja)
+st.set_page_config(page_title="📷 Redimensionador de Imágenes", layout="centered")
+st.title("📷 Redimensionador de Imágenes")
+st.write("Sube tus imágenes y las procesaremos según su orientación.")
 
-def redimensionar_y_guardar(img, tamaño, nombre_base, sufijo, carpeta_salida):
-    """Redimensiona y guarda la imagen como JPG (calidad 95%)."""
-    img_redimensionada = img.resize(tamaño, Image.LANCZOS)
-    nombre_archivo = f"{nombre_base}_{sufijo}.jpg"
-    ruta_salida = os.path.join(carpeta_salida, nombre_archivo)
-    img_redimensionada.save(ruta_salida, format='JPEG', quality=95, subsampling=0)
-    return nombre_archivo
+# 🔹 Botón para limpiar cargas previas
+if st.button("🗑 Limpiar imágenes anteriores"):
+    shutil.rmtree(OUTPUT_FOLDER)
+    os.makedirs(OUTPUT_FOLDER)
+    st.success("✅ Imágenes anteriores eliminadas.")
 
-
-def crear_zip(carpeta, nombre_zip):
-    """Crea un archivo ZIP con todas las imágenes de la carpeta."""
-    ruta_zip = os.path.join(carpeta, nombre_zip)
-    with zipfile.ZipFile(ruta_zip, 'w', zipfile.ZIP_DEFLATED) as zipf:
-        for archivo in os.listdir(carpeta):
-            if archivo != nombre_zip:
-                zipf.write(os.path.join(carpeta, archivo), arcname=archivo)
-    return ruta_zip
-
-def limpiar_carpeta(carpeta):
-    """Elimina la carpeta si existe."""
-    if os.path.exists(carpeta):
-        shutil.rmtree(carpeta)
-
-# --- Interfaz Streamlit ---
-st.title('📷 Redimensionador de Imágenes Para SIBA Visual EPG')
-st.write('Si la imagen es vertical → 480x720 (2:3). Si es horizontal → 1920x1080 y 3840x2160 (16:9).')
-
-carpeta_salida = 'imagenes_redimensionadas'
-
-# Botón para limpiar archivos anteriores
-if st.button("🗑 Limpiar archivos anteriores"):
-    limpiar_carpeta(carpeta_salida)
-    st.success("Archivos anteriores eliminados.")
-
-archivos_subidos = st.file_uploader(
-    "Arrastra y suelta tus imágenes aquí",
-    type=['png', 'jpg', 'jpeg'],
+# 📤 Cargar imágenes
+uploaded_files = st.file_uploader(
+    "Selecciona una o más imágenes", 
+    type=["jpg", "jpeg", "png"], 
     accept_multiple_files=True
 )
 
-if archivos_subidos:
-    if st.button('⚙ Procesar y Descargar ZIP'):
-        limpiar_carpeta(carpeta_salida)
-        os.makedirs(carpeta_salida, exist_ok=True)
-        archivos_generados = []
+# 📌 Procesar imágenes
+if uploaded_files:
+    total_files = len(uploaded_files)
+    progress_bar = st.progress(0)
+    processed_files = []
 
-        progreso = st.progress(0)
-        total = len(archivos_subidos)
+    for i, uploaded_file in enumerate(uploaded_files, start=1):
+        img = Image.open(uploaded_file)
 
-        for i, archivo in enumerate(archivos_subidos):
-            try:
-                img = Image.open(archivo)
-                nombre_base = os.path.splitext(archivo.name)[0]
-                ancho, alto = img.size
+        # Verificar orientación y redimensionar
+        if img.height > img.width:
+            # 📸 Vertical → recortar a 2:3 y redimensionar a 480x720
+            target_ratio = 2 / 3
+            current_ratio = img.width / img.height
+            if current_ratio > target_ratio:  
+                new_width = int(img.height * target_ratio)
+                left = (img.width - new_width) / 2
+                img = img.crop((left, 0, left + new_width, img.height))
+            elif current_ratio < target_ratio:
+                new_height = int(img.width / target_ratio)
+                top = (img.height - new_height) / 2
+                img = img.crop((0, top, img.width, top + new_height))
+            img_resized = img.resize((480, 720), Image.Resampling.LANCZOS)
+            output_path = os.path.join(OUTPUT_FOLDER, f"{os.path.splitext(uploaded_file.name)[0]}_480x720.jpg")
+            img_resized.save(output_path, "JPEG", quality=100)
+            processed_files.append(output_path)
 
-                if alto > ancho:
-                    # Imagen vertical → 480x720
-                    img_2x3 = recortar_a_proporcion(img, (2, 3))
-                    archivo_2x3 = redimensionar_y_guardar(img_2x3, (480, 720), nombre_base, '480x720', carpeta_salida)
-                    archivos_generados.append(archivo_2x3)
-                else:
-                    # Imagen horizontal → 1920x1080 y 3840x2160
-                    img_16x9 = recortar_a_proporcion(img, (16, 9))
-                    archivo_hd = redimensionar_y_guardar(img_16x9, (1920, 1080), nombre_base, '1920x1080', carpeta_salida)
-                    archivo_4k = redimensionar_y_guardar(img_16x9, (3840, 2160), nombre_base, '3840x2160', carpeta_salida)
-                    archivos_generados.extend([archivo_hd, archivo_4k])
+        else:
+            # 🖼 Horizontal → recortar a 16:9 y redimensionar a 1920x1080 y 3840x2160
+            target_ratio = 16 / 9
+            current_ratio = img.width / img.height
+            if current_ratio > target_ratio:
+                new_width = int(img.height * target_ratio)
+                left = (img.width - new_width) / 2
+                img = img.crop((left, 0, left + new_width, img.height))
+            elif current_ratio < target_ratio:
+                new_height = int(img.width / target_ratio)
+                top = (img.height - new_height) / 2
+                img = img.crop((0, top, img.width, top + new_height))
 
-                # Actualizar barra de progreso
-                progreso.progress(int(((i + 1) / total) * 100))
+            # Guardar versiones
+            for size in [(1920, 1080), (3840, 2160)]:
+                img_resized = img.resize(size, Image.Resampling.LANCZOS)
+                output_path = os.path.join(OUTPUT_FOLDER, f"{os.path.splitext(uploaded_file.name)[0]}_{size[0]}x{size[1]}.jpg")
+                img_resized.save(output_path, "JPEG", quality=100)
+                processed_files.append(output_path)
 
-            except Exception as e:
-                st.error(f"Error procesando {archivo.name}: {e}")
+        # Actualizar barra de progreso
+        progress_bar.progress(i / total_files)
 
-        # Crear ZIP
-        nombre_zip = "imagenes_redimensionadas.zip"
-        ruta_zip = crear_zip(carpeta_salida, nombre_zip)
+    st.success(f"✅ Procesadas {len(processed_files)} imágenes.")
 
-        # Descargar ZIP
-        with open(ruta_zip, "rb") as f:
-            st.download_button(
-                label="📦 Descargar todas en ZIP",
-                data=f,
-                file_name=nombre_zip,
-                mime="application/zip"
-            )
+    # 📦 Crear ZIP para descarga
+    zip_buffer = BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w") as zipf:
+        for file_path in processed_files:
+            zipf.write(file_path, os.path.basename(file_path))
+    zip_buffer.seek(0)
 
-
+    st.download_button(
+        label="⬇ Descargar imágenes en ZIP",
+        data=zip_buffer,
+        file_name="imagenes_procesadas.zip",
+        mime="application/zip"
+    )
